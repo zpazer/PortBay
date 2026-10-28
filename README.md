@@ -13,15 +13,23 @@ No more `lsof -i :3000` and `kill -9` to find the dev server you forgot in anoth
 - **Shows exposed ports.** An orange Wi-Fi icon marks servers listening on all interfaces, which other devices on your network can reach.
 - **Open at login**, if you want it.
 
-## Requirements
-
-- macOS 13 Ventura or later
-- Apple Silicon (the build script targets `arm64`)
-- Xcode or the Xcode Command Line Tools (`xcode-select --install`), for `swiftc`
-
 ## Install
 
-Build it from source:
+Port Bay needs macOS 13 Ventura or later, on Apple Silicon or Intel.
+
+### Download
+
+1. Download `PortBay-<version>.zip` from the [latest release](https://github.com/zpazer/PortBay/releases/latest).
+2. Unzip it and drag `PortBay.app` into your Applications folder.
+3. Open it. The first time, macOS blocks it because the app isn't notarized by Apple. Click **Done**, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the message about PortBay, then confirm. You only need to do this once.
+
+   Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/PortBay.app`
+
+Port Bay lives in the menu bar (look for the stacked squares icon) and has no Dock icon.
+
+### Build from source
+
+You need Xcode or the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 git clone https://github.com/zpazer/PortBay.git
@@ -30,6 +38,8 @@ cd PortBay
 ```
 
 `build.sh` compiles the app, signs it ad hoc for your machine, copies it to `~/Applications/PortBay.app` and starts it. Run it again after changing the code; it replaces the installed copy and restarts it.
+
+`./build.sh --release` builds the app for both Apple Silicon and Intel and zips it as `build/PortBay-<version>.zip`, ready to attach to a GitHub release.
 
 ## How it works
 
@@ -42,7 +52,7 @@ A process counts as a **dev server** unless its executable lives inside an `.app
 
 ## Uninstall
 
-Quit Port Bay from its panel, then delete `~/Applications/PortBay.app`. To remove its settings too:
+Quit Port Bay from its panel, then delete `PortBay.app` from your Applications folder. To remove its settings too:
 
 ```sh
 defaults delete app.portbay
