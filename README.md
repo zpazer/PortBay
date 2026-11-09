@@ -11,7 +11,7 @@ No more `lsof -i :3000` and `kill -9` to find the dev server you forgot in anoth
 - **Notices restarts.** If something brings the port straight back (for example `brew services` or a file watcher), Port Bay tells you.
 - **Actions menu.** Click (or right-click) a row to open it in the browser, show its folder in Finder, copy the PID or the full command, or force kill it.
 - **Shows exposed ports.** An orange Wi-Fi icon marks servers listening on all interfaces, which other devices on your network can reach.
-- **Open at login**, if you want it.
+- **Open at login**, if you want it. Port Bay asks once, the first time you open it. To change it later, use System Settings → General → Login Items.
 
 ## Install
 
@@ -25,7 +25,7 @@ Port Bay needs macOS 13 Ventura or later, on Apple Silicon or Intel.
 
    Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/PortBay.app`
 
-Port Bay lives in the menu bar (look for the stacked squares icon) and has no Dock icon.
+Port Bay lives in the menu bar (look for the stacked squares icon) and has no Dock icon. If you can't see the icon, for example because the menu bar is full or the notch covers it, open Port Bay again from Spotlight or Finder and its panel appears at the top right.
 
 ### Build from source
 

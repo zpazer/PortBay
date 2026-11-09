@@ -157,7 +157,6 @@ final class PortModel: ObservableObject {
     @Published private(set) var stopping: Set<pid_t> = []
     @Published private(set) var stuck: Set<pid_t> = []
     @Published private(set) var message: String?
-    @Published private(set) var loginStatus = SMAppService.mainApp.status
     var panelShown = false
     private var cache: [String: ProcInfo] = [:]
 
@@ -219,16 +218,6 @@ final class PortModel: ObservableObject {
                 show("Stopped \(name).")
             }
         }
-    }
-
-    func setOpenAtLogin(_ enabled: Bool) {
-        do {
-            if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-        } catch {
-            show("Couldn't change Open at login: \(error.localizedDescription)")
-        }
-        loginStatus = SMAppService.mainApp.status
-        if loginStatus == .requiresApproval { show("Allow Port Bay in System Settings → General → Login Items.") }
     }
 
     private func show(_ text: String) {
@@ -304,10 +293,6 @@ struct PortList: View {
 
             Divider().padding(.top, 8)
             HStack {
-                Toggle("Open at login", isOn: Binding(
-                    get: { model.loginStatus == .enabled || model.loginStatus == .requiresApproval },
-                    set: { model.setOpenAtLogin($0) }))
-                    .toggleStyle(.checkbox)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }
@@ -531,6 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "PortBay"
         if let button = statusItem.button {
             let image = NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Listening ports")?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .medium))
@@ -550,6 +536,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let size = change.newValue { self?.place(size: size) }
             }
         }
+        Task { askToOpenAtLogin() }
+    }
+
+    // Asked once, on the first launch. After that it's changed in System Settings → General → Login Items.
+    private func askToOpenAtLogin() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "askedOpenAtLogin") else { return }
+        defaults.set(true, forKey: "askedOpenAtLogin")
+        guard SMAppService.mainApp.status != .enabled else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Open Port Bay when you log in?"
+        alert.informativeText = "Port Bay lives in the menu bar. It can start by itself each time you log in, "
+            + "so your ports are always one click away.\n\nYou can change this later in System Settings → General → Login Items."
+        alert.addButton(withTitle: "Open at Login")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try SMAppService.mainApp.register()
+            if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    // Opening the app again (Spotlight, Finder) shows the panel, so it can be reached even when
+    // macOS has hidden the icon in a full menu bar.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        statusItem.isVisible = true // brings the icon back if it was ⌘-dragged out of the menu bar
+        if !isOpen { openPanel(clicked: nil) }
+        return false
     }
 
     @objc private func togglePanel(_ sender: NSStatusBarButton) {
@@ -558,23 +576,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             closePanel()
             return
         }
+        openPanel(clicked: sender)
+    }
+
+    private func openPanel(clicked: NSStatusBarButton?) {
         // Remember where the icon is now; the panel keeps this top edge while it is open.
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        var icon = sender.window.map { $0.convertToScreen(sender.convert(sender.bounds, to: nil)) } ?? .zero
+        let button = clicked ?? statusItem.button
+        var icon = button.flatMap { button in
+            button.window.map { $0.convertToScreen(button.convert(button.bounds, to: nil)) }
+        } ?? .zero
         // The icon can be a copy on another display, or parked off-screen when macOS hides it
-        // (crowded menu bar, notch). Then go by the click instead.
+        // (crowded menu bar, notch). Then go by the click, or the top right where menu bar icons live.
         if let screen, !screen.frame.contains(NSPoint(x: icon.midX, y: icon.midY)) {
             let barHeight = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top)
-            icon = NSRect(x: mouse.x, y: screen.frame.maxY - barHeight, width: 0, height: barHeight)
+            let x = clicked == nil ? screen.frame.maxX : mouse.x
+            icon = NSRect(x: x, y: screen.frame.maxY - barHeight, width: 0, height: barHeight)
         }
         self.screen = screen
         top = NSPoint(x: icon.midX, y: min(icon.minY, screen?.visibleFrame.maxY ?? icon.minY) - 4)
         isOpen = true
         place(size: host.sizeThatFits(in: NSSize(width: 10_000, height: 10_000)))
         panel.makeKeyAndOrderFront(nil)
-        sender.highlight(true)
-        openedFrom = sender
+        button?.highlight(true)
+        openedFrom = button
         model.panelShown = true
         // A click in another app closes it, like a menu.
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
