@@ -13,11 +13,24 @@ struct ProcInfo {
     let isDev: Bool
 }
 
+/// Changes from scan to scan, so it is read every time instead of cached.
+struct Usage {
+    let cpu: Double      // percent of one core, as ps reports it
+    let memoryMB: Int
+    let uptime: String
+
+    var summary: String {
+        let memory = memoryMB >= 1024 ? String(format: "%.1f GB", Double(memoryMB) / 1024) : "\(memoryMB) MB"
+        return String(format: "CPU %.1f%%", cpu) + " · \(memory) · up \(uptime)"
+    }
+}
+
 struct PortProcess: Identifiable {
     let pid: pid_t
     let ports: [Int]
     let exposed: Bool
     let info: ProcInfo
+    let usage: Usage?
     var id: pid_t { pid }
 
     var folder: String? {
@@ -57,13 +70,14 @@ enum PortScanner {
         // A pid can be reused by another program, so cache by pid and command name together.
         func key(_ pid: pid_t) -> String { "\(pid):\(names[pid] ?? "")" }
         let fresh = details(for: order.filter { cache[key($0)] == nil })
+        let usages = usage(for: order)
         var kept: [String: ProcInfo] = [:]
         var processes: [PortProcess] = []
         for pid in order {
             guard let info = cache[key(pid)] ?? fresh[pid] else { continue }
             kept[key(pid)] = info
             processes.append(PortProcess(pid: pid, ports: ports[pid, default: []].sorted(),
-                                         exposed: exposed.contains(pid), info: info))
+                                         exposed: exposed.contains(pid), info: info, usage: usages[pid]))
         }
         processes.sort { ($0.ports.first ?? 0) < ($1.ports.first ?? 0) }
         return (processes, kept)
@@ -90,6 +104,30 @@ enum PortScanner {
                                    name: label(executable, commandLine), isDev: isDev(executable))
         }
         return result
+    }
+
+    private static func usage(for pids: [pid_t]) -> [pid_t: Usage] {
+        guard !pids.isEmpty else { return [:] }
+        let list = pids.map(String.init).joined(separator: ",")
+        var result: [pid_t: Usage] = [:]
+        for (pid, rest) in pidColumn(run("/bin/ps", "-o", "pid=,%cpu=,rss=,etime=", "-p", list)) {
+            let fields = rest.split(separator: " ")
+            guard fields.count == 3, let cpu = Double(fields[0]), let rss = Int(fields[1]) else { continue }
+            result[pid] = Usage(cpu: cpu, memoryMB: rss / 1024, uptime: uptime(String(fields[2])))
+        }
+        return result
+    }
+
+    /// ps elapsed time "[[dd-]hh:]mm:ss" as "3d 4h", "2h 15m", "12m" or "<1m".
+    private static func uptime(_ elapsed: String) -> String {
+        let dayParts = elapsed.split(separator: "-")
+        let days = dayParts.count == 2 ? Int(dayParts[0]) ?? 0 : 0
+        let clock = (dayParts.last ?? "").split(separator: ":").compactMap { Int($0) }
+        let hours = clock.count == 3 ? clock[0] : 0
+        let minutes = clock.count >= 2 ? clock[clock.count - 2] : 0
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return minutes > 0 ? "\(minutes)m" : "<1m"
     }
 
     /// Lines of "  <pid> <rest>" from ps, keyed by pid.
@@ -231,6 +269,33 @@ final class PortModel: ObservableObject {
 
 // MARK: - Views
 
+extension Color {
+    /// Dark yellow, a little brighter on a dark menu so it stays readable.
+    static let portNumber = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.85, green: 0.68, blue: 0.20, alpha: 1)
+            : NSColor(srgbRed: 0.62, green: 0.47, blue: 0.00, alpha: 1)
+    })
+}
+
+/// Shows its content at full height up to `maxHeight`, and scrolls beyond that.
+struct CappedScroll<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content.background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { height = proxy.size.height }
+                    .onChange(of: proxy.size.height) { height = $0 }
+            })
+        }
+        .frame(height: min(height, maxHeight))
+    }
+}
+
 struct PortList: View {
     @ObservedObject var model: PortModel
     @AppStorage("showOthers") private var showOthers = false
@@ -243,16 +308,20 @@ struct PortList: View {
             .padding(.top, 12)
             .padding(.bottom, 6)
 
-            VStack(spacing: 2) {
+            VStack(spacing: 0) {
                 if model.devProcesses.isEmpty {
                     Text("No dev servers running")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                 }
-                ForEach(model.devProcesses) { PortRow(process: $0, model: model) }
+                CappedScroll(maxHeight: 290) {
+                    VStack(spacing: 2) {
+                        ForEach(model.devProcesses) { PortRow(process: $0, model: model) }
+                    }
+                    .padding(.horizontal, 6)
+                }
             }
-            .padding(.horizontal, 6)
 
             if !model.otherProcesses.isEmpty {
                 Divider().padding(.vertical, 6)
@@ -271,13 +340,12 @@ struct PortList: View {
                 .padding(.horizontal, 14)
 
                 if showOthers {
-                    ScrollView {
+                    CappedScroll(maxHeight: 240) {
                         VStack(spacing: 2) {
                             ForEach(model.otherProcesses) { PortRow(process: $0, model: model) }
                         }
                         .padding(.horizontal, 6)
                     }
-                    .frame(height: min(CGFloat(model.otherProcesses.count) * 46, 300))
                     .padding(.top, 4)
                 }
             }
@@ -318,8 +386,8 @@ struct PortRow: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     ForEach(process.ports, id: \.self) { port in
                         Text(String(port))
-                            .font(.system(.body, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.system(.body, design: .monospaced).weight(.bold))
+                            .foregroundStyle(Color.portNumber)
                     }
                 }
                 .frame(width: 52, alignment: .trailing)
@@ -340,6 +408,12 @@ struct PortRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(process.info.commandLine)
+                    if let usage = process.usage {
+                        Text(usage.summary)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(usage.cpu >= 50 ? Color.orange : Color.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
             }
