@@ -10,6 +10,7 @@ No more `lsof -i :3000` and `kill -9` to find the dev server you forgot in anoth
 - **One click to stop.** The ⊗ button sends `SIGTERM`. If the process is still running after 3 seconds, the button turns into **Force**, which sends `SIGKILL`. App and system processes ask for a second click, because stopping one can quit the whole app.
 - **Notices restarts.** If something brings the port straight back (for example `brew services` or a file watcher), Port Bay tells you.
 - **Actions menu.** Click (or right-click) a row to open it in the browser, show its folder in Finder, copy the PID or the full command, or force kill it.
+- **Shows what each process uses.** CPU, memory and how long it has been running, under every row. The line turns orange at 50% CPU or more.
 - **Shows exposed ports.** An orange Wi-Fi icon marks servers listening on all interfaces, which other devices on your network can reach.
 - **Open at login**, if you want it. Port Bay asks once, the first time you open it. To change it later, use System Settings → General → Login Items.
 
